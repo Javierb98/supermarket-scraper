@@ -304,7 +304,10 @@ RULES = [
     (r'\bvacuno\b', 'Beef', 'meat', 540),
 ]
 
-COMPILED_RULES = [(re.compile(pattern, re.IGNORECASE), name, category, pid) for pattern, name, category, pid in RULES]
+COMPILED_RULES = [(re.compile(pattern, re.IGNORECASE), pattern, name, category, pid) for pattern, name, category, pid in RULES]
+
+def _infer_confidence(pattern_str):
+    return 'high' if '.*' in pattern_str else 'medium'
 
 REJECT_PATTERNS = [re.compile(p, re.IGNORECASE) for p in [
     r'\byogur[t]?\b|\bkéfir\b|\bkefir\b|\bpostre\s+l[aá]cte',
@@ -317,17 +320,18 @@ def classify(raw_name):
     n = raw_name.lower()
     for pat in REJECT_PATTERNS:
         if pat.search(n):
-            return None, None, None
-    for pattern, name, category, pid in COMPILED_RULES:
+            return None, None, None, None
+    for pattern, pattern_str, name, category, pid in COMPILED_RULES:
         if pattern.search(n):
-            return name, category, pid
-    return None, None, None
+            return name, category, pid, _infer_confidence(pattern_str)
+    return None, None, None, None
 
 def ensure_schema(conn):
     with conn.cursor() as cursor:
         for col, definition in [
             ('confidence',    "ENUM('high','medium','low') NULL AFTER catalog_product_id"),
             ('review_needed', "TINYINT(1) DEFAULT 0 AFTER confidence"),
+            ('region',        "VARCHAR(100) NULL AFTER city"),
         ]:
             cursor.execute("""
                 SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
@@ -361,26 +365,26 @@ def run():
                 discarded += 1
                 print(f"  [{i+1}/{total}] NO PRICE: {raw_name[:60]}")
                 continue
-            canonical_name, category, cat_id = classify(raw_name)
+            canonical_name, category, cat_id, confidence = classify(raw_name)
             if not canonical_name:
                 discarded += 1
                 print(f"  [{i+1}/{total}] NO MATCH: {raw_name[:60]}")
                 continue
             state = detect_state(raw_name)
-            print(f"  [{i+1}/{total}] OK: '{raw_name[:45]}' → {canonical_name}")
+            print(f"  [{i+1}/{total}] OK: '{raw_name[:45]}' → {canonical_name} [{confidence}]")
             try:
                 with conn.cursor() as cursor:
                     cursor.execute("""
                         INSERT INTO products_normalized
-                            (raw_scrape_id, chain, postal_code, city,
+                            (raw_scrape_id, chain, postal_code, city, region,
                              category, state, canonical_name,
                              catalog_product_id, confidence, review_needed,
                              raw_name, price, unit_price, unit, scraped_at)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """, (
                         row['id'], row.get('chain'), row.get('postal_code'),
-                        row.get('city'), category, state, canonical_name,
-                        cat_id, 'high', 0,
+                        row.get('city'), row.get('region'), category, state, canonical_name,
+                        cat_id, confidence, 0,
                         raw_name, actual_price, unit_price, unit,
                         row.get('scraped_at')
                     ))

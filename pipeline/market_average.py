@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS market_average (
     canonical_name      VARCHAR(255)  NOT NULL,
     category            VARCHAR(100),
     country             VARCHAR(2)    NOT NULL DEFAULT 'ES',
+    region              VARCHAR(100)  NULL,
     snapshot_date       DATE          NOT NULL,
     avg_price           DECIMAL(10,4) NOT NULL,
     min_price           DECIMAL(10,4) NOT NULL,
@@ -15,7 +16,7 @@ CREATE TABLE IF NOT EXISTS market_average (
     standard_unit       VARCHAR(20)   NOT NULL,
     sample_count        INT           NOT NULL,
     created_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_product_date_unit (canonical_name, country, snapshot_date, standard_unit)
+    UNIQUE KEY uq_product_date_unit_region (canonical_name, country, region, snapshot_date, standard_unit)
 ) CHARACTER SET utf8mb4;
 """
 
@@ -33,6 +34,7 @@ SELECT
     canonical_name,
     MAX(category)                   AS category,
     COALESCE(country, 'ES')         AS country,
+    region,
     AVG(COALESCE(unit_price, price)) AS avg_price,
     MIN(COALESCE(unit_price, price)) AS min_price,
     MAX(COALESCE(unit_price, price)) AS max_price,
@@ -51,15 +53,16 @@ WHERE canonical_name IS NOT NULL
 GROUP BY
     canonical_name,
     COALESCE(country, 'ES'),
+    region,
     COALESCE(unit, '€/unit')
 """
 
 INSERT = """
 INSERT IGNORE INTO market_average
-    (catalog_product_id, canonical_name, category, country,
+    (catalog_product_id, canonical_name, category, country, region,
      snapshot_date, avg_price, min_price, max_price, standard_unit, sample_count)
 VALUES
-    (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 def run():
@@ -72,12 +75,35 @@ def run():
             cursor.execute(CREATE_TABLE)
         conn.commit()
 
-        # Migrate old unique key (without standard_unit) if it still exists
+        # Migrate old unique keys if they still exist
         with conn.cursor() as cursor:
             cursor.execute(MIGRATE_UNIQUE_KEY)
             if cursor.fetchone()['cnt'] > 0:
                 cursor.execute("ALTER TABLE market_average DROP INDEX uq_product_date")
-                cursor.execute("ALTER TABLE market_average ADD UNIQUE KEY uq_product_date_unit (canonical_name, country, snapshot_date, standard_unit)")
+            cursor.execute("""
+                SELECT COUNT(*) AS cnt FROM information_schema.STATISTICS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'market_average'
+                  AND INDEX_NAME = 'uq_product_date_unit'
+            """)
+            if cursor.fetchone()['cnt'] > 0:
+                cursor.execute("ALTER TABLE market_average DROP INDEX uq_product_date_unit")
+            cursor.execute("""
+                SELECT COUNT(*) AS cnt FROM information_schema.STATISTICS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'market_average'
+                  AND INDEX_NAME = 'uq_product_date_unit_region'
+            """)
+            if cursor.fetchone()['cnt'] == 0:
+                cursor.execute("ALTER TABLE market_average ADD UNIQUE KEY uq_product_date_unit_region (canonical_name, country, region, snapshot_date, standard_unit)")
+            cursor.execute("""
+                SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'market_average'
+                  AND COLUMN_NAME = 'region'
+            """)
+            if cursor.fetchone()['cnt'] == 0:
+                cursor.execute("ALTER TABLE market_average ADD COLUMN region VARCHAR(100) NULL AFTER country")
         conn.commit()
 
         with conn.cursor() as cursor:
@@ -89,7 +115,7 @@ def run():
         with conn.cursor() as cursor:
             cursor.execute(COMPUTE, (scrape_date,))
             rows = cursor.fetchall()
-        print(f"  {len(rows)} national averages computed.")
+        print(f"  {len(rows)} regional averages computed.")
 
         with conn.cursor() as cursor:
             for row in rows:
@@ -98,6 +124,7 @@ def run():
                     row['canonical_name'],
                     row['category'],
                     row['country'],
+                    row['region'],
                     scrape_date,
                     round(float(row['avg_price']), 4),
                     round(float(row['min_price']), 4),
