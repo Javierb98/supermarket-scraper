@@ -1,10 +1,20 @@
 [Unit]
-Description=Monthly supermarket price run
+Description=Weekly supermarket price run
 
 [Timer]
-# The 1st of each month, early, with a random delay so the chains do not see
-# a request at exactly the same second every month from the same address.
-OnCalendar=*-*-01 04:00:00
+# Monday mornings, early, with a random delay so the chains do not see a
+# request at exactly the same second every week from the same address.
+#
+# Weekly buys freshness, and only freshness. It does NOT make the averages
+# any thicker: market_average counts one day's scrape, so running four times
+# a month gives four snapshots of the same size, not one snapshot four times
+# the size. What a product needs to clear the site's five-price minimum is
+# more chains and more postcodes, not more often.
+#
+# What weekly is worth: fresh produce genuinely reprices week to week — the
+# European Commission publishes these prices weekly for that reason — and a
+# missed run costs seven days instead of thirty.
+OnCalendar=Mon *-*-* 04:00:00
 RandomizedDelaySec=2h
 
 # The reason this is a timer and not a crontab line.

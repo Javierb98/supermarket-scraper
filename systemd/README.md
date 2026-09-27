@@ -14,10 +14,20 @@ Check it:
 
 cron fires only if the machine is awake at the appointed minute. This one is
 at home — power cuts, unplugging, router reboots — and every one of those used
-to mean a month silently missing.
+to mean a run silently missing.
 
 `Persistent=true` records when the run was last due. If the Pi was off, the run
-starts when it comes back instead of waiting for next month.
+starts when it comes back instead of waiting for the next one.
+
+## When it runs
+
+Mondays.
+
+Weekly is about freshness, not sample size. `market_average` aggregates a
+single day's scrape, so four runs a month produce four snapshots of the same
+size rather than one snapshot four times the size. Getting a product past the
+website's five-price minimum needs more chains and more postcodes; running
+more often will not do it.
 
 ## Testing it without waiting a month
 
