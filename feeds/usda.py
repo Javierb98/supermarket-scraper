@@ -32,6 +32,7 @@ the number of stores advertising, a pack size, and an organic flag.
 import base64
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -122,13 +123,29 @@ def explore():
 
 
 # The retail reports, each a weekly survey of grocery store advertising.
+#
+# They do not share a shape. Specialty crops keeps its figures in a section
+# called "Report by Region"; eggs and dairy use "Report Details", and name
+# their columns differently again — price_avg against wtd_Avg_Price,
+# stores_with_Ads against store_count. So each says where its data is and
+# what its columns are called rather than the feed assuming one layout and
+# silently reading nothing, which is what it did at first.
 REPORTS = [
-    ('3324', 'specialty crops'),   # fruit and vegetables
-    ('2757', 'eggs'),
-    ('2995', 'dairy'),
-    ('3228', 'beef'),
-    ('2868', 'pork'),
-    ('2756', 'chicken'),
+    {
+        'slug': '3324', 'what': 'specialty crops', 'section': 'Report by Region',
+        'price': 'wtd_Avg_Price', 'stores': 'stores_with_Ads',
+        'name_from': 'commodity', 'size_from': 'size',
+    },
+    {
+        'slug': '2757', 'what': 'eggs', 'section': 'Report Details',
+        'price': 'price_avg', 'stores': 'store_count',
+        'name_from': 'commodity', 'size_from': 'price_unit',
+    },
+    {
+        'slug': '2995', 'what': 'dairy', 'section': 'Report Details',
+        'price': 'wtd_avg_price', 'stores': 'store_count',
+        'name_from': 'commodity', 'size_from': 'package',
+    },
 ]
 
 # USDA commodity -> the canonical name the site uses, and its category.
@@ -156,7 +173,21 @@ COMMODITIES = {
     'Cabbage': ('Cabbage', 'veg'),
     'Sweet Corn': ('Sweet Corn', 'veg'),
     'Eggs': ('Eggs', 'eggs'),
+
+    # Eggs and dairy, from their own reports.
+    'Egg': ('Eggs', 'eggs'),
+    'Milk': ('Milk', 'dairy'),
+    'Cheese': ('Cheese', 'dairy'),
+    'Butter': ('Butter', 'dairy'),
+    'Yogurt': ('Yogurt', 'dairy'),
+    'Sour Cream': ('Sour Cream', 'dairy'),
+    'Cottage Cheese': ('Cottage Cheese', 'dairy'),
 }
+
+# Dairy quotes a package rather than a weight, and milk is sold by volume
+# while cheese is sold by weight, so the same words mean different things.
+LITRES = {'gallon': 3.78541, 'half gallon': 1.89271, 'quart': 0.94635, 'pint': 0.47318}
+BY_VOLUME = {'Milk', 'Flavored Milk', 'Eggnog'}
 
 LB_PER_KG = 2.2046226
 
@@ -175,7 +206,7 @@ ON DUPLICATE KEY UPDATE
 """
 
 
-def to_kg(price, size):
+def to_kg(price, size, by_volume=False):
     """
     A shelf price and the size it was for, turned into a price per kilo.
 
@@ -187,7 +218,7 @@ def to_kg(price, size):
     if not size:
         return None, None
 
-    text = size.strip().lower()
+    text = str(size).strip().lower()
 
     if text in ('per lb', 'lb', 'per pound'):
         return round(price * LB_PER_KG, 4), 'kg'
@@ -196,7 +227,6 @@ def to_kg(price, size):
         return round(price, 4), 'unit'
 
     # "3 lb bag", "5 lb bag", "1 lb package"
-    import re
     m = re.match(r'^([\d.]+)\s*lb\b', text)
     if m:
         pounds = float(m.group(1))
@@ -208,15 +238,26 @@ def to_kg(price, size):
         ounces = float(m.group(1))
         return (round((price / (ounces / 16.0)) * LB_PER_KG, 4), 'kg') if ounces > 0 else (None, None)
 
-    if 'dozen' in text or text == 'per dozen':
+    if 'dozen' in text or 'carton' in text:
+        # A grocery carton is a dozen unless it says otherwise.
         return round(price, 4), 'dozen'
+
+    # Dairy packages: a gallon of milk is a volume, a pound of cheese is not.
+    if by_volume:
+        litres = LITRES.get(text)
+        if litres:
+            return round(price / litres, 4), 'l'
+        m = re.match(r'^([\d.]+)\s*oz\b', text)
+        if m and float(m.group(1)) > 0:
+            return round(price / (float(m.group(1)) * 0.0295735), 4), 'l'
 
     return None, None
 
 
-def to_average(row):
+def to_average(row, report=None):
     """One survey row as the arguments of the upsert, or None if unusable."""
-    commodity = (row.get('commodity') or '').strip()
+    report = report or REPORTS[0]
+    commodity = (row.get(report['name_from']) or '').strip()
     mapped = COMMODITIES.get(commodity)
 
     if mapped is None:
@@ -225,22 +266,29 @@ def to_average(row):
     name, category = mapped
 
     try:
-        price = float(row.get('wtd_Avg_Price'))
+        price = float(row.get(report['price']))
     except (TypeError, ValueError):
         return None
 
     if price <= 0:
         return None
 
-    value, unit = to_kg(price, row.get('size'))
+    value, unit = to_kg(price, row.get(report['size_from']), commodity in BY_VOLUME)
 
     if value is None:
         return None
 
     # "National" is the fallback figure and is stored with no region, which is
     # how everything else in the table says the same thing.
-    region = row.get('region')
-    region = None if region in (None, '', 'National') else region
+    # The egg report writes the same places several ways — MidWest, Midwest,
+    # NATIONAL — so they are folded together or the same region would be
+    # stored as three.
+    region = (row.get('region') or '').strip()
+    canonical = {'midwest': 'Midwest', 'northeast': 'Northeast', 'northwest': 'Northwest',
+                 'southeast': 'Southeast', 'southwest': 'Southwest',
+                 'southcentral': 'Southcentral', 'alaska': 'Alaska', 'hawaii': 'Hawaii'}
+    region = canonical.get(region.lower().replace(' ', ''), region)
+    region = None if region in ('', 'National') or region.lower() == 'national' else region
 
     # Organic is a different product at a different price, and mixing the two
     # would make the average describe neither.
@@ -253,7 +301,7 @@ def to_average(row):
     # Unlike most official series this one says how many stores it saw, so the
     # count is real rather than zero.
     try:
-        stores = max(0, int(row.get('stores_with_Ads') or 0))
+        stores = max(0, int(row.get(report['stores']) or 0))
     except (TypeError, ValueError):
         stores = 0
 
@@ -279,7 +327,8 @@ def run():
     written = skipped = 0
 
     try:
-        for slug, what in REPORTS:
+        for report in REPORTS:
+            slug, what = report['slug'], report['what']
             week = latest_week(slug)
 
             if week is None:
@@ -290,7 +339,7 @@ def run():
             print(f'--- {what}: week ending {end} ---')
 
             try:
-                rows = get(f'reports/{slug}/Report by Region', {'q': f'report_begin_date={begin}'})
+                rows = get(f'reports/{slug}/{report["section"]}', {'q': f'report_begin_date={begin}'})
             except SystemExit as e:
                 print(f'   {e}', file=sys.stderr)
                 continue
@@ -315,7 +364,7 @@ def run():
             buckets = {}
 
             for row in rows:
-                mapped = to_average(row)
+                mapped = to_average(row, report)
 
                 if mapped is None:
                     skipped += 1
