@@ -73,6 +73,29 @@ CANDIDATES = [
      ('results',)),
     ('Sainsbury (UK)',  'https://www.sainsburys.co.uk/groceries-api/gol-services/product/v1/product?filter[keyword]=milk',
      ('products',)),
+
+    # ── The rest of Europe ───────────────────────────────────────────────
+    #
+    # From a datacentre address: REWE answered with products (though prices
+    # need a store resolved first), Albert Heijn 401 like Kroger, and every
+    # French chain refused. France matters — 343 farms — so if any of these
+    # open up from the Pi it is worth knowing.
+    ('REWE (DE)',       'https://shop.rewe.de/api/products?search=milch&objectsPerPage=3',
+     ('_embedded', 'products')),
+    ('Albert Heijn (NL)', 'https://api.ah.nl/mobile-services/product/search/v2?query=melk&size=3',
+     ('products',)),
+    ('Jumbo (NL)',      'https://mobileapi.jumbo.com/v17/search?q=melk&limit=3',
+     ('products', 'data')),
+    ('Carrefour (FR)',  'https://www.carrefour.fr/api/firstresults?q=lait',
+     ('products',)),
+    ('Intermarche (FR)', 'https://www.intermarche.com/api/service/products/v2/search?query=lait',
+     ('products',)),
+    ('Leclerc (FR)',    'https://www.e.leclerc/api/rest/live-api/product-search?q=lait',
+     ('products',)),
+    ('Auchan (FR)',     'https://www.auchan.fr/api/proxy/search/v1/products?text=lait',
+     ('products',)),
+    ('Continente (PT)', 'https://www.continente.pt/api/catalog/search?q=leite',
+     ('products',)),
 ]
 
 
