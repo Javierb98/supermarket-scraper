@@ -41,7 +41,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.db import get_connection
+from utils.db import get_connection, ensure_market_average_schema
 
 try:
     from dotenv import load_dotenv
@@ -275,6 +275,7 @@ def latest_week(slug):
 def run():
     """Load the latest published week of every retail report into market_average."""
     conn = get_connection()
+    ensure_market_average_schema(conn)
     written = skipped = 0
 
     try:

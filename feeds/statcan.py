@@ -31,7 +31,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.db import get_connection
+from utils.db import get_connection, ensure_market_average_schema
 
 API = 'https://www150.statcan.gc.ca/t1/wds/rest/getDataFromCubePidCoordAndLatestNPeriods'
 PRODUCT_ID = 18100245
@@ -150,6 +150,7 @@ def fetch(geo_id, product_id, retries=3):
 
 def run():
     conn = get_connection()
+    ensure_market_average_schema(conn)
     written = skipped = 0
 
     try:

@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.db import get_connection
+from utils.db import get_connection, ensure_market_average_schema
 
 CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS market_average (
@@ -80,9 +80,9 @@ def run():
     today = date.today()
 
     try:
-        with conn.cursor() as cursor:
-            cursor.execute(CREATE_TABLE)
-        conn.commit()
+        # One definition of this table, shared with the feeds that also write
+        # to it, so whichever runs first leaves it right for the others.
+        ensure_market_average_schema(conn)
 
         # Migrate old unique keys if they still exist
         with conn.cursor() as cursor:
