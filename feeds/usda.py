@@ -71,7 +71,10 @@ def api_key():
 
 
 def get(path, params=None):
-    url = f'{BASE}/{path.lstrip("/")}'
+    # The section names have spaces in them — "Report by Region" — so the path
+    # is quoted, not just the query. Unencoded it reaches http.client as a
+    # control character and never leaves the machine.
+    url = f'{BASE}/{urllib.parse.quote(path.lstrip("/"))}'
 
     if params:
         url += '?' + urllib.parse.urlencode(params)
