@@ -49,6 +49,30 @@ CANDIDATES = [
      ('product',)),
     ('Gadis',           'https://www.gadisline.com/api/search?q=tomate',
      ('products',)),
+
+    # ── United States, Canada, UK ────────────────────────────────────────
+    #
+    # Probed from a datacentre address these answered: Kroger 401 (a real API
+    # wanting a token), Publix an HTML page with no products, Target 401,
+    # Trader Joe's and Safeway 403, and Walmart 418 with an Akamai "Access
+    # Denied" — which is not a wall a residential address gets through either.
+    # Worth re-running here to see which of those soften.
+    ('Kroger (needs key)', 'https://api.kroger.com/v1/locations?filter.zipCode.near=45202',
+     ('data',)),
+    ('Trader Joe\'s',   'https://www.traderjoes.com/api/graphql',
+     ('data',)),
+    ('Publix',          'https://services.publix.com/api/v1/product/search?searchTerm=milk',
+     ('products',)),
+    ('Walmart',         'https://www.walmart.com/orchestra/home/graphql',
+     ('data',)),
+    ('Target',          'https://redsky.target.com/redsky_aggregations/v1/web/plp_search_v2?keyword=milk',
+     ('data',)),
+    ('Safeway',         'https://www.safeway.com/abs/pub/xapi/search/products?q=milk&storeid=1',
+     ('primaryProducts',)),
+    ('Tesco (UK)',      'https://www.tesco.com/groceries/en-GB/search?query=milk',
+     ('results',)),
+    ('Sainsbury (UK)',  'https://www.sainsburys.co.uk/groceries-api/gol-services/product/v1/product?filter[keyword]=milk',
+     ('products',)),
 ]
 
 
@@ -74,7 +98,13 @@ def probe(name, url, path):
     except urllib.error.HTTPError as e:
         # 403 is the interesting failure: it usually means a bot wall rather
         # than a wrong address, and it is the one that differs by connection.
-        return f'{e.code} {"— blocked, probably bot protection" if e.code in (401, 403, 429) else ""}'.strip()
+        note = {
+            401: '— a real API wanting a key; register rather than scrape',
+            403: '— blocked, probably bot protection',
+            418: '— bot wall (Akamai); this one does not soften by address',
+            429: '— rate limited; slow down',
+        }.get(e.code, '')
+        return f'{e.code} {note}'.strip()
     except Exception as e:
         return f'no answer ({type(e).__name__})'
 
