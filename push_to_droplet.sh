@@ -45,24 +45,36 @@ die() { echo "push: $*" >&2; exit 1; }
 local_mysql() { docker exec -e MYSQL_PWD="${DB_PASSWORD}" -i mysql mysql -u root -N -s scraper_db "$@"; }
 
 # ── 1. what is there to send? ────────────────────────────────────────────
-SNAPSHOT="$(local_mysql -e 'SELECT MAX(snapshot_date) FROM market_average' 2>/dev/null || true)"
+#
+# Everything newer than the last confirmed delivery, not only the newest
+# snapshot. Two reasons it can no longer be just the newest.
+#
+# Official feeds and scrapes do not share a date: Statistics Canada publishes
+# a July figure in September, so on any day a scrape also runs the newest
+# snapshot is the scrape, and the Canadian rows would never leave this machine.
+#
+# And a gap has to be able to close itself. There are months sitting here that
+# were computed and never delivered; sending only the latest would strand them
+# permanently. INSERT IGNORE makes re-sending harmless, so the safe thing is
+# to send everything that might not have arrived.
+SINCE="$(cat "${STATE_FILE}" 2>/dev/null || echo '1000-01-01')"
+[[ "${SINCE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || SINCE='1000-01-01'
 
+SNAPSHOT="$(local_mysql -e 'SELECT MAX(snapshot_date) FROM market_average' 2>/dev/null || true)"
 [[ "${SNAPSHOT}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
     || die "could not read a snapshot date from the local database (got '${SNAPSHOT}')"
 
-ROWS="$(local_mysql -e "SELECT COUNT(*) FROM market_average WHERE snapshot_date = '${SNAPSHOT}'")"
-[[ "${ROWS}" -gt 0 ]] || die "snapshot ${SNAPSHOT} has no rows; refusing to push an empty import"
+ROWS="$(local_mysql -e "SELECT COUNT(*) FROM market_average WHERE snapshot_date > '${SINCE}'")"
 
-# A snapshot already confirmed on the far side needs no resending. This is
-# also how a catch-up run knows it has nothing to do.
-if [[ -f "${STATE_FILE}" && "$(cat "${STATE_FILE}")" == "${SNAPSHOT}" ]]; then
-    echo "snapshot ${SNAPSHOT} was already delivered; nothing to do"
+if [[ "${ROWS}" -eq 0 ]]; then
+    echo "nothing newer than ${SINCE}; the droplet is up to date"
     exit 0
 fi
 
-echo "pushing snapshot ${SNAPSHOT} (${ROWS} rows)"
+DATES="$(local_mysql -e "SELECT GROUP_CONCAT(DISTINCT snapshot_date ORDER BY snapshot_date) FROM market_average WHERE snapshot_date > '${SINCE}'")"
+echo "pushing ${ROWS} rows across: ${DATES}"
 
-EXPORT_FILE="/tmp/market_average_${SNAPSHOT}.sql"
+EXPORT_FILE="/tmp/market_average_after_${SINCE}.sql"
 REMOTE_FILE="/tmp/$(basename "${EXPORT_FILE}")"
 trap 'rm -f "${EXPORT_FILE}"' EXIT
 
@@ -74,7 +86,7 @@ docker exec -e MYSQL_PWD="${DB_PASSWORD}" mysql mysqldump \
     --insert-ignore \
     --no-create-info \
     --skip-add-locks \
-    --where="snapshot_date = '${SNAPSHOT}'" \
+    --where="snapshot_date > '${SINCE}'" \
     scraper_db market_average > "${EXPORT_FILE}"
 
 [[ -s "${EXPORT_FILE}" ]] || die "the dump came out empty"
@@ -90,7 +102,7 @@ deliver() {
 }
 
 confirm() {
-    "${SSH[@]}" "MYSQL_PWD='${DROPLET_DB_PASSWORD}' mysql -u '${DROPLET_DB_USER}' -N -s '${DROPLET_DB}' -e \"SELECT COUNT(*) FROM market_average WHERE snapshot_date = '${SNAPSHOT}'\""
+    "${SSH[@]}" "MYSQL_PWD='${DROPLET_DB_PASSWORD}' mysql -u '${DROPLET_DB_USER}' -N -s '${DROPLET_DB}' -e \"SELECT COUNT(*) FROM market_average WHERE snapshot_date > '${SINCE}'\""
 }
 
 for attempt in $(seq 1 "${ATTEMPTS}"); do
@@ -104,7 +116,7 @@ for attempt in $(seq 1 "${ATTEMPTS}"); do
 
         if [[ "${LANDED}" == "${ROWS}" ]]; then
             echo "${SNAPSHOT}" > "${STATE_FILE}"
-            echo "confirmed: ${LANDED} rows for ${SNAPSHOT} are on the droplet"
+            echo "confirmed: ${LANDED} rows through ${SNAPSHOT} are on the droplet"
             exit 0
         fi
 
@@ -120,4 +132,4 @@ done
 
 # Left unrecorded on purpose: the next run will find the state file still
 # pointing at an older snapshot and try this one again.
-die "gave up after ${ATTEMPTS} attempts; snapshot ${SNAPSHOT} is NOT on the droplet"
+die "gave up after ${ATTEMPTS} attempts; snapshots after ${SINCE} are NOT on the droplet"
