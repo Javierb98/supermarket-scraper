@@ -1,4 +1,13 @@
 from datetime import date
+# Runnable on its own, not only through main.py. run_all.sh calls these
+# steps directly — `python pipeline/normalize.py` — and without this the
+# repository root is not on the path, so `from utils...` raised
+# ModuleNotFoundError and the step was skipped in silence.
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from utils.db import get_connection
 
 CREATE_TABLE = """
@@ -88,14 +97,10 @@ def run():
             """)
             if cursor.fetchone()['cnt'] > 0:
                 cursor.execute("ALTER TABLE market_average DROP INDEX uq_product_date_unit")
-            cursor.execute("""
-                SELECT COUNT(*) AS cnt FROM information_schema.STATISTICS
-                WHERE TABLE_SCHEMA = DATABASE()
-                  AND TABLE_NAME = 'market_average'
-                  AND INDEX_NAME = 'uq_product_date_unit_region'
-            """)
-            if cursor.fetchone()['cnt'] == 0:
-                cursor.execute("ALTER TABLE market_average ADD UNIQUE KEY uq_product_date_unit_region (canonical_name, country, region, snapshot_date, standard_unit)")
+            # The column first. This used to run after the unique key that
+            # names it, so on a table predating region the ALTER failed with
+            # 1072 ("Key column 'region' doesn't exist") — and took the whole
+            # aggregation step with it, every month since April.
             cursor.execute("""
                 SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
                 WHERE TABLE_SCHEMA = DATABASE()
@@ -104,6 +109,15 @@ def run():
             """)
             if cursor.fetchone()['cnt'] == 0:
                 cursor.execute("ALTER TABLE market_average ADD COLUMN region VARCHAR(100) NULL AFTER country")
+
+            cursor.execute("""
+                SELECT COUNT(*) AS cnt FROM information_schema.STATISTICS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'market_average'
+                  AND INDEX_NAME = 'uq_product_date_unit_region'
+            """)
+            if cursor.fetchone()['cnt'] == 0:
+                cursor.execute("ALTER TABLE market_average ADD UNIQUE KEY uq_product_date_unit_region (canonical_name, country, region, snapshot_date, standard_unit)")
         conn.commit()
 
         with conn.cursor() as cursor:

@@ -1,4 +1,13 @@
 import re
+# Runnable on its own, not only through main.py. run_all.sh calls these
+# steps directly — `python pipeline/normalize.py` — and without this the
+# repository root is not on the path, so `from utils...` raised
+# ModuleNotFoundError and the step was skipped in silence.
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from utils.db import get_connection
 
 def parse_price_string(raw_price):
