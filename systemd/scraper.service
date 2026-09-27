@@ -1,0 +1,32 @@
+[Unit]
+Description=Scrape supermarket prices and push the snapshot to the droplet
+# The scrape needs the network and the local MySQL container.
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=node-admin
+WorkingDirectory=/home/node-admin/scraper
+ExecStart=/usr/bin/env bash /home/node-admin/scraper/run_all.sh
+
+# A run that fails on a flaky connection is worth another go before waiting
+# a month. The script itself already retries the push; this covers a failure
+# earlier than that, in the scrape or the normalise.
+Restart=on-failure
+RestartSec=30min
+
+# It talks to the outside world, so it gets no more of the system than it
+# needs: its own directory to write logs and the state file, and nothing else.
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/node-admin/scraper
+
+# A scrape should never be the reason the Pi falls over.
+MemoryMax=900M
+TimeoutStartSec=4h
+
+[Install]
+WantedBy=multi-user.target

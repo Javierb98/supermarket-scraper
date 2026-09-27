@@ -7,3 +7,8 @@ cron.log
 *.log
 /tmp/
 .DS_Store
+
+# Written by push_to_droplet.sh — the last snapshot confirmed on the droplet.
+.last_delivered
+logs/
+.run.lock

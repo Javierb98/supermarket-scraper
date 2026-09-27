@@ -1,0 +1,21 @@
+[Unit]
+Description=Monthly supermarket price run
+
+[Timer]
+# The 1st of each month, early, with a random delay so the chains do not see
+# a request at exactly the same second every month from the same address.
+OnCalendar=*-*-01 04:00:00
+RandomizedDelaySec=2h
+
+# The reason this is a timer and not a crontab line.
+#
+# cron only fires if the machine happens to be awake at the appointed minute.
+# This one is at home: it loses power, it gets unplugged, the router reboots.
+# Every one of those used to mean a month silently missing.
+#
+# Persistent records when the run was last due. If the Pi was off, the run
+# starts as soon as it comes back rather than waiting for next month.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
