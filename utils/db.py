@@ -88,8 +88,12 @@ def ensure_market_average_schema(conn):
         """)
 
         # Columns first, every time, before anything that references them.
+        #
+        # The widths match Evocultiva's entity mapping, which is what the site
+        # reads these rows back through. A column wider here than the mapping
+        # there is a value the site would accept and then fail to store.
         for column, definition in [
-            ('region',      "VARCHAR(100) NULL AFTER country"),
+            ('region',      "VARCHAR(60) NULL AFTER country"),
             ('source',      "VARCHAR(30) NOT NULL DEFAULT 'scrape' AFTER region"),
             ('source_name', "VARCHAR(120) NULL AFTER source"),
         ]:
