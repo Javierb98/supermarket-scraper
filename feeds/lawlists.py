@@ -26,7 +26,7 @@ from statistics import median
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from feeds.common import USER_AGENT
+from feeds.common import USER_AGENT, TLS
 from utils.db import get_connection, ensure_raw_schema, save_raw
 from pipeline.matcher import Matcher, detect_state, check_fresh
 from pipeline.pack import from_name
@@ -42,7 +42,7 @@ def download(url, suffix='', retries=3, timeout=120):
         fd, path = tempfile.mkstemp(prefix='lawlist-', suffix=suffix)
         try:
             req = urllib.request.Request(url, headers={'User-Agent': USER_AGENT, 'Accept': '*/*'})
-            with urllib.request.urlopen(req, timeout=timeout) as r, os.fdopen(fd, 'wb') as f:
+            with urllib.request.urlopen(req, timeout=timeout, context=TLS) as r, os.fdopen(fd, 'wb') as f:
                 shutil.copyfileobj(r, f, 1 << 20)
             time.sleep(1.0)
             return path

@@ -16,6 +16,7 @@ feeds/registry.py so the weekly run picks it up.
 
 import json
 import os
+import ssl
 import sys
 import time
 import urllib.request
@@ -33,6 +34,14 @@ STAGES = ('retail', 'wholesale', 'farmers_market', 'farmgate')
 UNITS = ('kg', 'l', 'dozen', 'unit')
 
 USER_AGENT = 'Evocultiva-price-feed/1.0 (+https://evocultiva.org)'
+
+# The Pi's system certificate list (Debian 11) lacks newer authorities, such
+# as the one Statistics Poland's site uses; certifi's is kept current.
+try:
+    import certifi
+    TLS = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    TLS = ssl.create_default_context()
 
 
 @dataclass
@@ -138,7 +147,7 @@ def get(url, data=None, headers=None, retries=3, timeout=60, pause=1.0):
     for attempt in range(retries):
         try:
             req = urllib.request.Request(url, data=data, headers=h)
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with urllib.request.urlopen(req, timeout=timeout, context=TLS) as r:
                 body = r.read()
             time.sleep(pause)
             return body
