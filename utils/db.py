@@ -20,6 +20,10 @@ def ensure_raw_schema(conn):
         for col, definition in [
             ('region',     'VARCHAR(100) NULL AFTER city'),
             ('scrape_date', 'DATE NULL AFTER url'),
+            # The shop's own aisle for the product, where it says: a search
+            # for "cebolla" also finds onion pâté, and the aisle tells them apart.
+            ('shop_category', 'VARCHAR(200) NULL AFTER category'),
+            ('country', "VARCHAR(2) NOT NULL DEFAULT 'ES' AFTER postal_code"),
         ]:
             cursor.execute("""
                 SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
@@ -45,14 +49,16 @@ def ensure_raw_schema(conn):
             print("  Added deduplication key to raw_scrapes.")
     conn.commit()
 
-def save_raw(conn, chain, store_name, postal_code, city, region, category, raw_name, raw_price, raw_unit_price, url):
+def save_raw(conn, chain, store_name, postal_code, city, region, category, raw_name, raw_price, raw_unit_price, url,
+             shop_category=None, country='ES'):
     with conn.cursor() as cursor:
         cursor.execute("""
             INSERT IGNORE INTO raw_scrapes
-                (chain, store_name, postal_code, city, region, category,
+                (chain, store_name, postal_code, country, city, region, category, shop_category,
                  raw_name, raw_price, raw_unit_price, url, scrape_date)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURDATE())
-        """, (chain, store_name, postal_code, city, region, category, raw_name, raw_price, raw_unit_price, url))
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURDATE())
+        """, (chain, store_name, postal_code, country, city, region, category, (shop_category or None) and shop_category[:200],
+              raw_name, raw_price, raw_unit_price, url))
 
 
 def ensure_market_average_schema(conn):
@@ -96,6 +102,12 @@ def ensure_market_average_schema(conn):
             ('region',      "VARCHAR(60) NULL AFTER country"),
             ('source',      "VARCHAR(30) NOT NULL DEFAULT 'scrape' AFTER region"),
             ('source_name', "VARCHAR(120) NULL AFTER source"),
+            # What kind of price: 'retail' (a shop shelf), 'wholesale' (a
+            # wholesale market), 'farmers_market', 'farmgate' (paid to the
+            # producer). They are different prices and are never averaged
+            # together or shown as one another.
+            ('price_stage', "VARCHAR(20) NOT NULL DEFAULT 'retail' AFTER source_name"),
+            ('currency',    "VARCHAR(3) NOT NULL DEFAULT 'EUR' AFTER price_stage"),
         ]:
             cursor.execute("""
                 SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
@@ -109,7 +121,7 @@ def ensure_market_average_schema(conn):
 
         # Older keys that did not know about region, which would collide the
         # moment two regions reported the same product on the same day.
-        for stale in ('uq_product_date', 'uq_product_date_unit'):
+        for stale in ('uq_product_date', 'uq_product_date_unit', 'uq_product_date_unit_region'):
             cursor.execute("""
                 SELECT COUNT(*) AS cnt FROM information_schema.STATISTICS
                 WHERE TABLE_SCHEMA = DATABASE()
@@ -120,18 +132,45 @@ def ensure_market_average_schema(conn):
                 cursor.execute(f"ALTER TABLE market_average DROP INDEX {stale}")
                 print(f"  market_average: dropped {stale}")
 
+        # A national figure has no region, and MySQL never treats two NULLs
+        # as equal, so a unique key on region let the same national figure
+        # in twice (every re-run of a feed, every retried push). The key is
+        # on region_key instead: the region, or '' for the whole country.
+        cursor.execute("""
+            SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'market_average' AND COLUMN_NAME = 'region_key'
+        """)
+        if cursor.fetchone()['cnt'] == 0:
+            cursor.execute("""
+                DELETE a FROM market_average a JOIN market_average b
+                  ON a.canonical_name = b.canonical_name AND a.country = b.country
+                 AND a.region IS NULL AND b.region IS NULL AND a.snapshot_date = b.snapshot_date
+                 AND a.standard_unit = b.standard_unit AND a.price_stage = b.price_stage AND a.id < b.id
+            """)
+            print(f"  market_average: removed {cursor.rowcount} duplicate national rows")
+            cursor.execute("ALTER TABLE market_average ADD COLUMN region_key VARCHAR(60) "
+                           "AS (COALESCE(region, '')) STORED AFTER region")
+            cursor.execute("""
+                SELECT COUNT(*) AS cnt FROM information_schema.STATISTICS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'market_average' AND INDEX_NAME = 'uq_market_figure'
+            """)
+            if cursor.fetchone()['cnt'] > 0:
+                cursor.execute("ALTER TABLE market_average DROP INDEX uq_market_figure")
+
         cursor.execute("""
             SELECT COUNT(*) AS cnt FROM information_schema.STATISTICS
             WHERE TABLE_SCHEMA = DATABASE()
               AND TABLE_NAME   = 'market_average'
-              AND INDEX_NAME   = 'uq_product_date_unit_region'
+              AND INDEX_NAME   = 'uq_market_figure'
         """)
         if cursor.fetchone()['cnt'] == 0:
+            # A shelf price and a wholesale price for the same product, place
+            # and day are two figures, not a duplicate.
             cursor.execute("""
                 ALTER TABLE market_average
-                ADD UNIQUE KEY uq_product_date_unit_region
-                    (canonical_name, country, region, snapshot_date, standard_unit)
+                ADD UNIQUE KEY uq_market_figure
+                    (canonical_name, country, region_key, snapshot_date, standard_unit, price_stage)
             """)
-            print("  market_average: added the region-aware unique key")
+            print("  market_average: added the unique key with price_stage")
 
     conn.commit()

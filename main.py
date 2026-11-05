@@ -1,27 +1,26 @@
 """
-The scrapers, and only the scrapers.
+The scrapers, one at a time, each on its own.
 
-This used to call normalize and market_average as well, which run_all.sh then
-called again — so every run classified and averaged the same rows twice. The
-pipeline belongs to run_all.sh, which can tell which step failed; this file
-just gathers.
+    python main.py              every scraper
+    python main.py Consum       just the one
 
-A chain that raises stops the run rather than being skipped. An empty
-Mercadona is not a day with no Mercadona prices, it is a day whose averages
-would quietly be drawn from whatever else happened to work.
+Each scraper's outcome is recorded (utils/runs.py). One that fails no longer
+stops the others or the rest of the run: a week Mercadona blocks us is still
+a week with Consum's and Eroski's prices. The exit code says whether any
+failed, so the weekly run can report it once everything else is done.
 """
 
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from scrapers.consum import run as consum_run
 from scrapers.eroski import run as eroski_run
 from scrapers.mercadona import run as mercadona_run
+from utils.runs import record
 
-# Ordered cheapest first, so a run that is going to fail on a wall tends to
-# fail after something has already been gathered rather than before.
 SCRAPERS = [
     ('Consum',    consum_run),
     ('Eroski',    eroski_run),
@@ -29,20 +28,22 @@ SCRAPERS = [
 ]
 
 if __name__ == '__main__':
+    only = set(sys.argv[1:])
     failures = []
 
     for name, run in SCRAPERS:
+        if only and name not in only:
+            continue
+        started = time.time()
         try:
             run()
+            record(f'scrape:{name}', 'ok', int(time.time() - started))
         except Exception as e:
-            # Keep going: one chain behind a bot wall should not cost the day's
-            # prices from the others. The failure is reported at the end, and
-            # the exit code carries it, so run_all.sh still stops the pipeline.
             print(f'SCRAPER FAILED: {name}: {e}', file=sys.stderr)
+            record(f'scrape:{name}', 'failed', int(time.time() - started))
             failures.append(name)
 
     if failures:
-        print(f'{len(failures)} of {len(SCRAPERS)} scrapers failed: {", ".join(failures)}', file=sys.stderr)
+        print(f'{len(failures)} scraper(s) failed: {", ".join(failures)}', file=sys.stderr)
         sys.exit(1)
-
-    print(f'All {len(SCRAPERS)} scrapers finished.')
+    print('All scrapers finished.')

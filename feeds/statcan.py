@@ -32,6 +32,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.db import get_connection, ensure_market_average_schema
+from pipeline.catalog import resolve
 
 API = 'https://www150.statcan.gc.ca/t1/wds/rest/getDataFromCubePidCoordAndLatestNPeriods'
 PRODUCT_ID = 18100245
@@ -93,10 +94,12 @@ PRODUCTS = [
 
 UPSERT = """
 INSERT INTO market_average
-    (canonical_name, category, country, region, source, source_name,
+    (canonical_name, catalog_product_id, category, country, region, source, source_name, price_stage, currency,
      snapshot_date, avg_price, min_price, max_price, standard_unit, sample_count)
-VALUES (%s, %s, 'CA', %s, 'official', %s, %s, %s, %s, %s, %s, 0)
+VALUES (%s, %s, %s, 'CA', %s, 'official', %s, 'retail', 'CAD', %s, %s, %s, %s, %s, 0)
 ON DUPLICATE KEY UPDATE
+    catalog_product_id = VALUES(catalog_product_id),
+    currency    = VALUES(currency),
     avg_price   = VALUES(avg_price),
     min_price   = VALUES(min_price),
     max_price   = VALUES(max_price),
@@ -174,7 +177,7 @@ def run():
                     # source gives, and inventing a spread around it would be
                     # making up a range nobody measured.
                     cursor.execute(UPSERT, (
-                        name, category, region, SOURCE_NAME,
+                        *resolve(name), category, region, SOURCE_NAME,
                         snapshot, price, price, price, unit,
                     ))
 

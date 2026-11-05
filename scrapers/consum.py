@@ -147,6 +147,7 @@ def scrape_term(conn, session, term, category):
                     raw_price=raw_price,
                     raw_unit_price=raw_unit_price,
                     url=data.get('url', ''),
+                    shop_category=', '.join(c.get('name', '').strip() for c in product.get('categories') or [] if c.get('name')),
                 )
                 saved += 1
 

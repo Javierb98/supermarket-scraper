@@ -43,6 +43,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.db import get_connection, ensure_market_average_schema
+from pipeline.catalog import resolve
 
 try:
     from dotenv import load_dotenv
@@ -193,10 +194,12 @@ LB_PER_KG = 2.2046226
 
 UPSERT = """
 INSERT INTO market_average
-    (canonical_name, category, country, region, source, source_name,
+    (canonical_name, catalog_product_id, category, country, region, source, source_name, price_stage, currency,
      snapshot_date, avg_price, min_price, max_price, standard_unit, sample_count)
-VALUES (%s, %s, 'US', %s, 'official', %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, 'US', %s, 'official', %s, 'retail', 'USD', %s, %s, %s, %s, %s, %s)
 ON DUPLICATE KEY UPDATE
+    catalog_product_id = VALUES(catalog_product_id),
+    currency    = VALUES(currency),
     avg_price    = VALUES(avg_price),
     min_price    = VALUES(min_price),
     max_price    = VALUES(max_price),
@@ -385,7 +388,7 @@ def run():
 
                 with conn.cursor() as cursor:
                     cursor.execute(UPSERT, (
-                        name, category, region, SOURCE_NAME, snapshot,
+                        *resolve(name), category, region, SOURCE_NAME, snapshot,
                         avg, round(b['lo'], 4), round(b['hi'], 4), unit, b['stores'],
                     ))
 
